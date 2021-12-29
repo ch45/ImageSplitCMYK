@@ -12,7 +12,7 @@ import processing.pdf.*;
 String inputFile = "";
 final static int minGridSpacing = 2;
 final static int maxGridSpacing = 32;
-int gridSpacing = 5;
+int gridSpacing = 25;
 final static int longEdgeDots = 1754; // A4 150dpi
 final static int shortEdgeDots = 1240;
 PShape saveIcon;
@@ -26,6 +26,7 @@ PImage smallPictureMagenta;
 PImage smallPictureYellow;
 PImage smallPictureBlack;
 PImage outputPicture;
+Dimension smallPicture;
 int lastWidth;
 int lastHeight;
 boolean doRedraw = false;
@@ -104,19 +105,19 @@ void readImageFile() {
 
 void initComponentImages() {
   statusInitComponentImages = RUNNING;
-  Point dim = new Point(floor(inputPicture.width / gridSpacing), floor(inputPicture.height / gridSpacing));
-  cmykImageData = new CMYKColour[dim.y][dim.x];
-  smallPictureRed = createImage(dim.x, dim.y, RGB);
-  smallPictureGreen = createImage(dim.x, dim.y, RGB);
-  smallPictureBlue = createImage(dim.x, dim.y, RGB);
-  smallPictureCyan = createImage(dim.x, dim.y, RGB);
-  smallPictureMagenta = createImage(dim.x, dim.y, RGB);
-  smallPictureYellow = createImage(dim.x, dim.y, RGB);
-  smallPictureBlack = createImage(dim.x, dim.y, RGB);
+  smallPicture = new Dimension(inputPicture.width / gridSpacing, inputPicture.height / gridSpacing);
+  cmykImageData = new CMYKColour[smallPicture.h][smallPicture.w];
+  smallPictureRed = createImage(smallPicture.w, smallPicture.h, RGB);
+  smallPictureGreen = createImage(smallPicture.w, smallPicture.h, RGB);
+  smallPictureBlue = createImage(smallPicture.w, smallPicture.h, RGB);
+  smallPictureCyan = createImage(smallPicture.w, smallPicture.h, RGB);
+  smallPictureMagenta = createImage(smallPicture.w, smallPicture.h, RGB);
+  smallPictureYellow = createImage(smallPicture.w, smallPicture.h, RGB);
+  smallPictureBlack = createImage(smallPicture.w, smallPicture.h, RGB);
   outputPicture = createImage(1, 1, RGB); // an initial pixel then set white and resize to that of the paper
   outputPicture.set(0, 0, #FFFFFF);
-  Point dimOutput = scaleDimensionIgnoreOrientation(inputPicture.width, inputPicture.height, longEdgeDots, shortEdgeDots);
-  outputPicture.resize(dimOutput.x, dimOutput.y);
+  Dimension dimOutput = scaleDimensionIgnoreOrientation(inputPicture.width, inputPicture.height, longEdgeDots, shortEdgeDots);
+  outputPicture.resize(dimOutput.w, dimOutput.h);
   doRedraw = true;
   statusInitComponentImages = DONE;
   statusSumColourComponents = REQUIRED;
@@ -142,8 +143,8 @@ void sumColourComponents() {
 
 void cmykExtraction() {
   statusCMYKExtraction = RUNNING;
-  for (int y = 0; y < smallPictureRed.height; y++) {
-    for (int x = 0; x < smallPictureRed.width; x++) {
+  for (int y = 0; y < smallPicture.h; y++) {
+    for (int x = 0; x < smallPicture.w; x++) {
       float colourRed = red(smallPictureRed.get(x, y));
       float colourGreen = green(smallPictureGreen.get(x, y));
       float colourBlue = blue(smallPictureBlue.get(x, y));
@@ -163,21 +164,49 @@ void cmykExtraction() {
 
 void createPrint() {
   statusCreatePrint = RUNNING;
-  int y = 0;
-  int x = 0;
-  float scale = (float)outputPicture.width / smallPictureRed.width;
-  float radius = ((float)outputPicture.width / smallPictureRed.width * gridSpacing) / 2;
-  for (; y < smallPictureRed.height; y++) {
-    for (x = 0; x < smallPictureRed.width; x++) {
-      CMYKColour cmyk = cmykImageData[y][x];
-      cmykPrintingDots(x, y, radius, scale, cmyk, "c");
-      cmykPrintingDots(x, y, radius, scale, cmyk, "m");
-      cmykPrintingDots(x, y, radius, scale, cmyk, "y");
-      cmykPrintingDots(x, y, radius, scale, cmyk, "k");
-    }
+  final String[] inks = {"c", "m", "y", "k"};
+  float scale = (float)outputPicture.width / smallPicture.w;
+  float radius = scale / 2;
+  for (String ink : inks) {
+    cmykPrintInkPolar(radius, scale, ink);
   }
   doRedraw = true;
   statusCreatePrint = DONE;
+}
+
+void cmykPrintInkPolar(float radius, float scale, String ink) {
+  int rows = smallPicture.h;
+  int cols = smallPicture.w;
+  Dimension offset = new Dimension(radius, radius);
+  for (int y = 0; y < rows; y++) {
+    for (int x = 0; x < cols; x++) {
+      CMYKColour cmyk = cmykImageData[y][x];
+      cmykPrintPolarDots(x, y, offset, radius, scale, ink, cmyk);
+    }
+  }
+}
+
+void cmykPrintPolarDots(int x, int y, Dimension offset, float radius, float scale, String ink, CMYKColour cmyk) {
+  final float step = 60;
+  color dotColour = getRGBfromInk(ink);
+  float intensity = cmyk.getInkIntensity(ink);
+  float start = getScreenAngle(ink);
+  float end = map(intensity, 0, 1, 0, 360 * (radius - 1));
+  int count = 0;
+  for (float angle = start; angle < end; angle += step) {
+    if (++count > 360 / (int)step) {
+      count = 1;
+      radius--;
+    }
+    float rad = radians(angle);
+    //add some jiggle
+    float randomX = random(-0.2, 0.2) * radius;
+    float randomY = random(-0.2, 0.2) * radius;
+    //calculate the polar array of points
+    float xA = x * scale + offset.w + radius * cos(rad) + randomX;
+    float yA = y * scale + offset.h + radius * sin(rad) + randomY;
+    outputPicture.set(round(xA), round(yA), dotColour);
+  }
 }
 
 void savePrint() {
@@ -256,23 +285,6 @@ color aggrateAroundGrid(int gridX, int gridY) {
   return color(sumRed / count, sumGreen / count, sumBlue / count);
 }
 
-void cmykPrintingDots(int x, int y, float radius, float scale, CMYKColour cmyk, String ink) {
-  color dotColour = getRGBfromInk(ink);
-  float sAng = getScreenAngle(ink);
-  float intensity = cmyk.getInkIntensity(ink);
-  float step = map(intensity, 1.0, 0.0, 7.2, 72);
-  for (float aAng = sAng; aAng <= 360 + sAng; aAng += step) {
-    float aRad = radians(aAng);
-    //add some jiggle
-    float aRandomX = random(-0.1, 0.1) * radius;
-    float aRandomY = random(-0.1, 0.1) * radius;
-    //calculate the polar array of points
-    float xA = x * scale + radius * (1 + cos(aRad)) + aRandomX;
-    float yA = y * scale + radius * (1 + sin(aRad)) + aRandomY;
-    outputPicture.set(round(xA), round(yA), dotColour);
-  }
-}
-
 color getRGBfromInk(String ink) {
   switch(ink) {
   case "c":
@@ -301,15 +313,15 @@ float getScreenAngle(String ink) {
   }
 }
 
-Point scaleDimensionIgnoreOrientation(int srcX, int srcY, int targetLong, int targetShort) {
+Dimension scaleDimensionIgnoreOrientation(int srcX, int srcY, int targetLong, int targetShort) {
   int inLong = max(srcX, srcY);
   int inShort = min(srcX, srcY);
   float scale1 = (float)targetLong / inLong;
   float scale2 = (float)targetShort / inShort;
   if (scale1 <= scale2) {
-    return new Point(round(scale1 * srcX), round(scale1 * srcY));
+    return new Dimension(scale1 * srcX, scale1 * srcY);
   } else {
-    return new Point(round(scale2 * srcX), round(scale2 * srcY));
+    return new Dimension(scale2 * srcX, scale2 * srcY);
   }
 }
 
@@ -470,5 +482,20 @@ void clearDisplayWindow() {
   fill.set(0, 0, #CCCCCC);
   fill.resize(width, height);
   image(fill, 0, 0);
+}
+
+class Dimension {
+  int w;
+  int h;
+
+  Dimension(int w, int h) {
+    this.w = w;
+    this.h = h;
+  }
+
+  Dimension(float w, float h) {
+    this.w = floor(w);
+    this.h = floor(h);
+  }
 }
 
