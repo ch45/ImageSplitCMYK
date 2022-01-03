@@ -2,6 +2,7 @@
 *.autosave
 *.orig
 *.pdf
+output*.svg
 *.tmp
 *.zip
 *~

@@ -8,6 +8,7 @@
  */
 
 import processing.pdf.*;
+import processing.svg.*;
 
 String inputFile = "";
 final static int minGridSpacing = 2;
@@ -26,11 +27,14 @@ PImage smallPictureMagenta;
 PImage smallPictureYellow;
 PImage smallPictureBlack;
 PImage outputPicture;
-Dimension smallPicture;
+Dimension outputPictureDim;
+Dimension smallPictureDim;
 int lastWidth;
 int lastHeight;
 boolean doRedraw = false;
 CMYKColour[][] cmykImageData;
+final static JSONObject mapInkIndex = JSONObject.parse("{\"c\": 0, \"m\": 1, \"y\": 2, \"k\": 3}");
+final static String[] inksList = {"c", "m", "y", "k"};
 final static int WAIT = 0;
 final static int REQUIRED = 1;
 final static int RUNNING = 2;
@@ -41,6 +45,7 @@ int statusSumColourComponents = WAIT;
 int statusCMYKExtraction = WAIT;
 int statusCreatePrint = WAIT;
 int statusSavePrint = WAIT;
+ArrayList<ScribbleLine>[] scribbleLines;
 
 void setup() {
   size(1024, 768);
@@ -105,22 +110,56 @@ void readImageFile() {
 
 void initComponentImages() {
   statusInitComponentImages = RUNNING;
-  smallPicture = new Dimension(inputPicture.width / gridSpacing, inputPicture.height / gridSpacing);
-  cmykImageData = new CMYKColour[smallPicture.h][smallPicture.w];
-  smallPictureRed = createImage(smallPicture.w, smallPicture.h, RGB);
-  smallPictureGreen = createImage(smallPicture.w, smallPicture.h, RGB);
-  smallPictureBlue = createImage(smallPicture.w, smallPicture.h, RGB);
-  smallPictureCyan = createImage(smallPicture.w, smallPicture.h, RGB);
-  smallPictureMagenta = createImage(smallPicture.w, smallPicture.h, RGB);
-  smallPictureYellow = createImage(smallPicture.w, smallPicture.h, RGB);
-  smallPictureBlack = createImage(smallPicture.w, smallPicture.h, RGB);
+  smallPictureDim = new Dimension(inputPicture.width / gridSpacing, inputPicture.height / gridSpacing);
+  Dimension dim = smallPictureDim;
+  cmykImageData = new CMYKColour[dim.h][dim.w];
+  smallPictureRed = createImage(dim.w, dim.h, RGB);
+  smallPictureGreen = createImage(dim.w, dim.h, RGB);
+  smallPictureBlue = createImage(dim.w, dim.h, RGB);
+  smallPictureCyan = createImage(dim.w, dim.h, RGB);
+  smallPictureMagenta = createImage(dim.w, dim.h, RGB);
+  smallPictureYellow = createImage(dim.w, dim.h, RGB);
+  smallPictureBlack = createImage(dim.w, dim.h, RGB);
   outputPicture = createImage(1, 1, RGB); // an initial pixel then set white and resize to that of the paper
   outputPicture.set(0, 0, #FFFFFF);
-  Dimension dimOutput = scaleDimensionIgnoreOrientation(inputPicture.width, inputPicture.height, longEdgeDots, shortEdgeDots);
-  outputPicture.resize(dimOutput.w, dimOutput.h);
+  outputPictureDim = scaleDimensionIgnoreOrientation(inputPicture.width, inputPicture.height, longEdgeDots, shortEdgeDots);
+  outputPicture.resize(outputPictureDim.w, outputPictureDim.h);
+  initScribbleData();
   doRedraw = true;
   statusInitComponentImages = DONE;
   statusSumColourComponents = REQUIRED;
+}
+
+void initScribbleData() {
+  scribbleLines = (ArrayList<ScribbleLine>[])new ArrayList[4];
+  for (int j = 0; j < inksList.length; j++) {
+    scribbleLines[j] = new ArrayList<ScribbleLine>();
+  }
+}
+
+void saveScribbleDataSVG(String svgSaveFile) {
+  PGraphics svg = createGraphics(outputPictureDim.w, outputPictureDim.h, SVG, svgSaveFile);
+  svg.beginDraw();
+  svg.background(255);
+  for (String ink : inksList) {
+    float xB = 0;
+    float yB = 0;
+    color dotColour = getRGBfromInk(ink);
+    svg.stroke(dotColour);
+    // println("dotColour", red(dotColour), green(dotColour), blue(dotColour));
+    for (ScribbleLine line : scribbleLines[mapInkToIndex(ink)]) {
+      float xA = line.x;
+      float yA = line.y;
+      if (!line.moveTo) {
+        svg.line(xB,yB, xA,yA);
+      }
+      xB = xA;
+      yB = yA;
+    }
+  }
+  svg.dispose();
+  svg.endDraw();
+  println("Saved to " + svgSaveFile);
 }
 
 void sumColourComponents() {
@@ -143,8 +182,8 @@ void sumColourComponents() {
 
 void cmykExtraction() {
   statusCMYKExtraction = RUNNING;
-  for (int y = 0; y < smallPicture.h; y++) {
-    for (int x = 0; x < smallPicture.w; x++) {
+  for (int y = 0; y < smallPictureDim.h; y++) {
+    for (int x = 0; x < smallPictureDim.w; x++) {
       float colourRed = red(smallPictureRed.get(x, y));
       float colourGreen = green(smallPictureGreen.get(x, y));
       float colourBlue = blue(smallPictureBlue.get(x, y));
@@ -164,61 +203,139 @@ void cmykExtraction() {
 
 void createPrint() {
   statusCreatePrint = RUNNING;
-  final String[] inks = {"c", "m", "y", "k"};
-  float scale = (float)outputPicture.width / smallPicture.w;
-  float radius = scale / 2;
-  for (String ink : inks) {
-    cmykPrintInkPolar(radius, scale, ink);
-  }
+  createPrintScribble();
   doRedraw = true;
   statusCreatePrint = DONE;
 }
 
-void cmykPrintInkPolar(float radius, float scale, String ink) {
-  int rows = smallPicture.h;
-  int cols = smallPicture.w;
-  Dimension offset = new Dimension(radius, radius);
+void createPrintScribble() {
+  Dimension offset = new Dimension(gridSpacing / 2, gridSpacing / 2);
+  float scale = (float)outputPictureDim.w / smallPictureDim.w;
+  // println("offset", offset.w, offset.h, "scale", scale);
+  for (String ink : inksList) {
+    cmykPrintInkScribble(offset, scale, ink);
+  }
+}
+
+void cmykPrintInkScribble(Dimension offset, float scale, String ink) {
+  int rows = smallPictureDim.h;
+  int cols = smallPictureDim.w;
   for (int y = 0; y < rows; y++) {
     for (int x = 0; x < cols; x++) {
       CMYKColour cmyk = cmykImageData[y][x];
-      cmykPrintPolarDots(x, y, offset, radius, scale, ink, cmyk);
+      cmykPrintScribbleLines(x, y, offset, scale, ink, cmyk);
     }
   }
 }
 
-void cmykPrintPolarDots(int x, int y, Dimension offset, float radius, float scale, String ink, CMYKColour cmyk) {
-  final float step = 60;
+void cmykPrintScribbleLines(int x, int y, Dimension offset, float scale, String ink, CMYKColour cmyk) {
+  // println("scale", scale, "ink", ink);
   color dotColour = getRGBfromInk(ink);
   float intensity = cmyk.getInkIntensity(ink);
-  float start = getScreenAngle(ink);
-  float end = map(intensity, 0, 1, 0, 360 * (radius - 1));
-  int count = 0;
-  for (float angle = start; angle < end; angle += step) {
-    if (++count > 360 / (int)step) {
-      count = 1;
-      radius--;
-    }
-    float rad = radians(angle);
-    //add some jiggle
-    float randomX = random(-0.2, 0.2) * radius;
-    float randomY = random(-0.2, 0.2) * radius;
-    //calculate the polar array of points
-    float xA = x * scale + offset.w + radius * cos(rad) + randomX;
-    float yA = y * scale + offset.h + radius * sin(rad) + randomY;
-    outputPicture.set(round(xA), round(yA), dotColour);
+  Dimension dim = new Dimension(gridSpacing * 2, gridSpacing * 2); // TODO may be x2 to allow for overlapping
+  PGraphics pg = createGraphics(dim.w, dim.h);
+  pg.beginDraw();
+  if (ink.equals("c")) {
+    pg.background(255);
   }
+  pg.stroke(dotColour);
+  drawScribbles(pg, scribbleLines[mapInkToIndex(ink)], x, y, offset, gridSpacing / 2, scale, intensity);
+  pg.endDraw();
+  PImage img = pg.get();
+  image(img, 0, 0);
+  outputPicture.blend(img, 0, 0, dim.w, dim.h, floor(x * scale), floor(y * scale), dim.w, dim.h, BLEND);
+}
+
+void drawScribbles(PGraphics pg, ArrayList<ScribbleLine> scribble, int x, int y, Dimension offset, float radius, float scale, float intensity) {
+  fpPoint[] points = getRandomPointsOnCircumference(offset, radius, 2);
+  fpPoint centre = new fpPoint((points[0].x + points[1].x) / 2, (points[0].y + points[1].y) / 2);
+  if (abs(points[0].x - centre.x) > 0.00000001) {
+    fpPoint[] perpenPts = getPerpendicularPointsAtDistance(centre, points[0], radius / 2);
+    // y = mx + c;
+    float m0 = (points[0].y - centre.y) / (points[0].x - centre.x);
+    fpPoint[] boundaryLinePtsA = getPerpendicularPointsAtDistance(perpenPts[0], centre, radius);
+    fpPoint[] boundaryLinePtsB = getPerpendicularPointsAtDistance(perpenPts[1], centre, radius);
+    float m1 = (perpenPts[0].y - boundaryLinePtsA[0].y) / (perpenPts[0].x - boundaryLinePtsA[0].x);
+    float c1 = boundaryLinePtsA[0].y - m1 * boundaryLinePtsA[0].x;
+    float m2 = (perpenPts[1].y - boundaryLinePtsB[0].y) / (perpenPts[1].x - boundaryLinePtsB[0].x);
+    float c2 = boundaryLinePtsB[0].y - m2 * boundaryLinePtsB[0].x;
+
+    float len = radius;
+    float limit = (intensity + 1) * len / 2;
+    int end = (int)limit;
+    int start = end - (int)(intensity * len);
+    float x1 = boundaryLinePtsB[1].x;
+    float y1 = x1 * m0 + c2;
+    boolean firstPass = true;
+    for (int j = start; j <= end; j++) {
+      float x2 = map(j, 0, len, boundaryLinePtsA[0].x, boundaryLinePtsA[1].x);
+      float y2 = x2 * m0 + c1;
+      if (!firstPass || j == end) {
+        if (j == end) {
+          x2 = map(limit - end, 0, 1, x1, x2);
+          y2 = map(limit - end, 0, 1, y1, y2);
+        }
+        pg.line(x1,y1, x2,y2);
+        if (firstPass) {
+          scribble.add(new ScribbleLine(true, x * scale + x1, y * scale + y1));
+        }
+        scribble.add(new ScribbleLine(false, x * scale + x2, y * scale + y2));
+      }
+      j++;
+      if (j <= end) {
+        x1 = map(j, 0, len, boundaryLinePtsB[1].x, boundaryLinePtsB[0].x);
+        y1 = x1 * m0 + c2;
+        if (j == end) {
+          x1 = map(limit - end, 0, 1, x2, x1);
+          y1 = map(limit - end, 0, 1, y2, y1);
+        }
+        pg.line(x2,y2, x1,y1);
+        scribble.add(new ScribbleLine(firstPass, x * scale + x1, y * scale + y1));
+      }
+      firstPass = false;
+    }
+  } else {
+    println("todo need to accommodate vertical lines"); // Or just make slightly off vertical
+  }
+}
+
+fpPoint[] getPerpendicularPointsAtDistance(fpPoint p1, fpPoint p2, float distance) {
+  fpPoint[] perpenPts = new fpPoint[2];
+  float dx = p2.x - p1.x;
+  float dy = p2.y - p1.y;
+  float dist = sqrt(sq(dx) + sq(dy));
+  perpenPts[0] = new fpPoint(p1.x + distance * dy / dist, p1.y - distance * dx / dist);
+  perpenPts[1] = new fpPoint(p1.x - distance * dy / dist, p1.y + distance * dx / dist);
+  return perpenPts;
+}
+
+fpPoint[] getRandomPointsOnCircumference(Dimension offset, float radius, int num) {
+  fpPoint[] points = new fpPoint[num];
+  for (int j = 0; j < points.length; j++) {
+    float rAng = random(1, 360);
+    float rRad = radians(rAng);
+    float xA = offset.w + radius * cos(rRad);
+    float yA = offset.h + radius * sin(rRad);
+    points[j] = new fpPoint(xA, yA);
+  }
+  return points;
 }
 
 void savePrint() {
   statusSavePrint = RUNNING;
   String basename = inputFile.substring(0, inputFile.indexOf(".jpg"));
-  String pdfSaveFile = "output_" + basename + ".pdf";
-  PGraphics pdf = createGraphics(outputPicture.width, outputPicture.height, PDF, pdfSaveFile);
-  pdf.beginDraw();
-  pdf.image(outputPicture, 0, 0);
-  pdf.dispose();
-  pdf.endDraw();
-  println("Saved to " + pdfSaveFile);
+  if (keyPressed && key == CODED && keyCode == SHIFT) {
+    String svgSaveFile = "output_" + basename + ".svg";
+    saveScribbleDataSVG(svgSaveFile);
+  } else {
+    String pdfSaveFile = "output_" + basename + ".pdf";
+    PGraphics pdf = createGraphics(outputPicture.width, outputPicture.height, PDF, pdfSaveFile);
+    pdf.beginDraw();
+    pdf.image(outputPicture, 0, 0);
+    pdf.dispose();
+    pdf.endDraw();
+    println("Saved to " + pdfSaveFile);
+  }
   // outputPicture.save("_output_" + basename + ".png");
   statusSavePrint = DONE;
 }
@@ -484,6 +601,49 @@ void clearDisplayWindow() {
   image(fill, 0, 0);
 }
 
+void cmykPrintInkPolar(float radius, float scale, String ink) {
+  int rows = smallPictureDim.h;
+  int cols = smallPictureDim.w;
+  Dimension offset = new Dimension(radius, radius);
+  // println("offset", offset.h, offset.w);
+  for (int y = 0; y < rows; y++) {
+    for (int x = 0; x < cols; x++) {
+      CMYKColour cmyk = cmykImageData[y][x];
+      cmykPrintPolarDots(x, y, offset, radius, scale, ink, cmyk);
+    }
+  }
+}
+
+void cmykPrintPolarDots(int x, int y, Dimension offset, float radius, float scale, String ink, CMYKColour cmyk) {
+  final float step = 60;
+  color dotColour = getRGBfromInk(ink);
+  float intensity = cmyk.getInkIntensity(ink);
+  float start = getScreenAngle(ink);
+  float end = map(intensity, 0, 1, 0, 360 * (radius - 1));
+  // if (x == 0 && y == 0) {
+  //   println(x, y, radius, scale, ink, cmyk, start, nf(intensity, 0, 2), nf(step, 0, 2));
+  // }
+  int count = 0;
+  for (float angle = start; angle < end; angle += step) {
+    if (++count > 360 / (int)step) {
+      count = 1;
+      radius--;
+    }
+    float rad = radians(angle);
+    //add some jiggle
+    float randomX = random(-0.2, 0.2) * radius;
+    float randomY = random(-0.2, 0.2) * radius;
+    //calculate the polar array of points
+    float xA = x * scale + offset.w + radius * cos(rad) + randomX;
+    float yA = y * scale + offset.h + radius * sin(rad) + randomY;
+    outputPicture.set(round(xA), round(yA), dotColour);
+  }
+}
+
+int mapInkToIndex(String ink) {
+  return mapInkIndex.getInt(ink);
+}
+
 class Dimension {
   int w;
   int h;
@@ -499,3 +659,12 @@ class Dimension {
   }
 }
 
+class fpPoint {
+  float x;
+  float y;
+
+  fpPoint(float x, float y) {
+    this.x = x;
+    this.y = y;
+  }
+}
