@@ -33,12 +33,12 @@ int lastWidth;
 int lastHeight;
 boolean doRedraw = false;
 CMYKColour[][] cmykImageData;
-final static JSONObject mapInkIndex = JSONObject.parse("{\"c\": 0, \"m\": 1, \"y\": 2, \"k\": 3}");
-final static String[] inksList = {"c", "m", "y", "k"};
-final static int WAIT = 0;
-final static int REQUIRED = 1;
-final static int RUNNING = 2;
-final static int DONE = 3;
+static final JSONObject mapInkIndex = JSONObject.parse("{\"c\": 0, \"m\": 1, \"y\": 2, \"k\": 3}");
+static final String[] inksList = {"c", "m", "y", "k"};
+static final int WAIT = 0;
+static final int REQUIRED = 1;
+static final int RUNNING = 2;
+static final int DONE = 3;
 int statusReadFile = WAIT;
 int statusInitComponentImages = WAIT;
 int statusSumColourComponents = WAIT;
@@ -249,21 +249,23 @@ void cmykPrintScribbleLines(int x, int y, Dimension offset, float scale, String 
 void drawScribbles(PGraphics pg, ArrayList<ScribbleLine> scribble, int x, int y, Dimension offset, float radius, float scale, float intensity) {
   fpPoint[] points = getRandomPointsOnCircumference(offset, radius, 2);
   fpPoint centre = new fpPoint((points[0].x + points[1].x) / 2, (points[0].y + points[1].y) / 2);
-  if (abs(points[0].x - centre.x) > 0.00000001) {
-    fpPoint[] perpenPts = getPerpendicularPointsAtDistance(centre, points[0], radius / 2);
+
+  fpPoint[] perpenPts = getPerpendicularPointsAtDistance(centre, points[0], radius / 2);
+  fpPoint[] boundaryLinePtsA = getPerpendicularPointsAtDistance(perpenPts[0], centre, radius);
+  fpPoint[] boundaryLinePtsB = getPerpendicularPointsAtDistance(perpenPts[1], centre, radius);
+
+  float len = radius;
+  float limit = (intensity + 1) * len / 2;
+  int end = (int)limit;
+  int start = end - (int)(intensity * len);
+
+  if (abs(points[0].x - centre.x) > 0.1) {
     // y = mx + c;
     float m0 = (points[0].y - centre.y) / (points[0].x - centre.x);
-    fpPoint[] boundaryLinePtsA = getPerpendicularPointsAtDistance(perpenPts[0], centre, radius);
-    fpPoint[] boundaryLinePtsB = getPerpendicularPointsAtDistance(perpenPts[1], centre, radius);
     float m1 = (perpenPts[0].y - boundaryLinePtsA[0].y) / (perpenPts[0].x - boundaryLinePtsA[0].x);
     float c1 = boundaryLinePtsA[0].y - m1 * boundaryLinePtsA[0].x;
     float m2 = (perpenPts[1].y - boundaryLinePtsB[0].y) / (perpenPts[1].x - boundaryLinePtsB[0].x);
     float c2 = boundaryLinePtsB[0].y - m2 * boundaryLinePtsB[0].x;
-
-    float len = radius;
-    float limit = (intensity + 1) * len / 2;
-    int end = (int)limit;
-    int start = end - (int)(intensity * len);
     float x1 = boundaryLinePtsB[1].x;
     float y1 = x1 * m0 + c2;
     boolean firstPass = true;
@@ -295,7 +297,42 @@ void drawScribbles(PGraphics pg, ArrayList<ScribbleLine> scribble, int x, int y,
       firstPass = false;
     }
   } else {
-    println("todo need to accommodate vertical lines"); // Or just make slightly off vertical
+    // x = my + c;
+    float m0 = (points[0].x - centre.x) / (points[0].y - centre.y);
+    float m1 = (perpenPts[0].x - boundaryLinePtsA[0].x) / (perpenPts[0].y - boundaryLinePtsA[0].y);
+    float c1 = boundaryLinePtsA[0].x - m1 * boundaryLinePtsA[0].y;
+    float m2 = (perpenPts[1].x - boundaryLinePtsB[0].x) / (perpenPts[1].y - boundaryLinePtsB[0].y);
+    float c2 = boundaryLinePtsB[0].x - m2 * boundaryLinePtsB[0].y;
+    float y1 = boundaryLinePtsB[1].y;
+    float x1 = y1 * m0 + c2;
+    boolean firstPass = true;
+    for (int j = start; j <= end; j++) {
+      float y2 = map(j, 0, len, boundaryLinePtsA[0].y, boundaryLinePtsA[1].y);
+      float x2 = y2 * m0 + c1;
+      if (!firstPass || j == end) {
+        if (j == end) {
+          x2 = map(limit - end, 0, 1, x1, x2);
+          y2 = map(limit - end, 0, 1, y1, y2);
+        }
+        pg.line(x1,y1, x2,y2);
+        if (firstPass) {
+          scribble.add(new ScribbleLine(true, x * scale + x1, y * scale + y1));
+        }
+        scribble.add(new ScribbleLine(false, x * scale + x2, y * scale + y2));
+      }
+      j++;
+      if (j <= end) {
+        y1 = map(j, 0, len, boundaryLinePtsB[1].y, boundaryLinePtsB[0].y);
+        x1 = y1 * m0 + c2;
+        if (j == end) {
+          x1 = map(limit - end, 0, 1, x2, x1);
+          y1 = map(limit - end, 0, 1, y2, y1);
+        }
+        pg.line(x2,y2, x1,y1);
+        scribble.add(new ScribbleLine(firstPass, x * scale + x1, y * scale + y1));
+      }
+      firstPass = false;
+    }
   }
 }
 
