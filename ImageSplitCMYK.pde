@@ -14,6 +14,7 @@ String inputFile = "";
 final static int minGridSpacing = 2;
 final static int maxGridSpacing = 32;
 int gridSpacing = 25;
+static final float penWidth = 0.5; // in mm
 final static int longEdgeDots = 1754; // A4 150dpi
 final static int shortEdgeDots = 1240;
 PShape saveIcon;
@@ -138,20 +139,23 @@ void initScribbleData() {
 }
 
 void saveScribbleDataSVG(String svgSaveFile) {
+  println("Saving to " + svgSaveFile + " ...");
+  int numLines = 0;
   PGraphics svg = createGraphics(outputPictureDim.w, outputPictureDim.h, SVG, svgSaveFile);
   svg.beginDraw();
   svg.background(255);
+  svg.strokeWeight(penWidth);
   for (String ink : inksList) {
     float xB = 0;
     float yB = 0;
     color dotColour = getRGBfromInk(ink);
     svg.stroke(dotColour);
-    // println("dotColour", red(dotColour), green(dotColour), blue(dotColour));
     for (ScribbleLine line : scribbleLines[mapInkToIndex(ink)]) {
       float xA = line.x;
       float yA = line.y;
       if (!line.moveTo) {
         svg.line(xB,yB, xA,yA);
+        numLines++;
       }
       xB = xA;
       yB = yA;
@@ -159,7 +163,7 @@ void saveScribbleDataSVG(String svgSaveFile) {
   }
   svg.dispose();
   svg.endDraw();
-  println("Saved to " + svgSaveFile);
+  println("...done (numLines=" + numLines + ")");
 }
 
 void sumColourComponents() {
@@ -211,7 +215,7 @@ void createPrint() {
 void createPrintScribble() {
   Dimension offset = new Dimension(gridSpacing / 2, gridSpacing / 2);
   float scale = (float)outputPictureDim.w / smallPictureDim.w;
-  // println("offset", offset.w, offset.h, "scale", scale);
+  println("gridSpacing", gridSpacing, "offset", offset.w, offset.h, "scale", scale);
   for (String ink : inksList) {
     cmykPrintInkScribble(offset, scale, ink);
   }
@@ -247,91 +251,104 @@ void cmykPrintScribbleLines(int x, int y, Dimension offset, float scale, String 
 }
 
 void drawScribbles(PGraphics pg, ArrayList<ScribbleLine> scribble, int x, int y, Dimension offset, float radius, float scale, float intensity) {
+
+  if (intensity == 0) {
+    return;
+  }
+
   fpPoint[] points = getRandomPointsOnCircumference(offset, radius, 2);
   fpPoint centre = new fpPoint((points[0].x + points[1].x) / 2, (points[0].y + points[1].y) / 2);
 
   fpPoint[] perpenPts = getPerpendicularPointsAtDistance(centre, points[0], radius / 2);
-  fpPoint[] boundaryLinePtsA = getPerpendicularPointsAtDistance(perpenPts[0], centre, radius);
-  fpPoint[] boundaryLinePtsB = getPerpendicularPointsAtDistance(perpenPts[1], centre, radius);
 
+  fpPoint[] boundaryLinePtsA = getPerpendicularPointsAtDistance(perpenPts[0], centre, radius * 1.4);
+  fpPoint[] boundaryLinePtsB = getPerpendicularPointsAtDistance(perpenPts[1], centre, radius * 1.4);
+
+  int step = 1;
   float len = radius;
   float limit = (intensity + 1) * len / 2;
   int end = (int)limit;
   int start = end - (int)(intensity * len);
+  int j = start;
 
-  if (abs(points[0].x - centre.x) > 0.1) {
+  float m0;
+  float m1;
+  float c1;
+  float m2;
+  float c2;
+  float x1;
+  float y1;
+  float x2;
+  float y2;
+
+  boolean along_x_axis = abs(points[0].x - centre.x) > abs(points[0].y - centre.y);
+  if (along_x_axis) {
     // y = mx + c;
-    float m0 = (points[0].y - centre.y) / (points[0].x - centre.x);
-    float m1 = (perpenPts[0].y - boundaryLinePtsA[0].y) / (perpenPts[0].x - boundaryLinePtsA[0].x);
-    float c1 = boundaryLinePtsA[0].y - m1 * boundaryLinePtsA[0].x;
-    float m2 = (perpenPts[1].y - boundaryLinePtsB[0].y) / (perpenPts[1].x - boundaryLinePtsB[0].x);
-    float c2 = boundaryLinePtsB[0].y - m2 * boundaryLinePtsB[0].x;
-    float x1 = boundaryLinePtsB[1].x;
-    float y1 = x1 * m0 + c2;
-    boolean firstPass = true;
-    for (int j = start; j <= end; j++) {
-      float x2 = map(j, 0, len, boundaryLinePtsA[0].x, boundaryLinePtsA[1].x);
-      float y2 = x2 * m0 + c1;
-      if (!firstPass || j == end) {
-        if (j == end) {
-          x2 = map(limit - end, 0, 1, x1, x2);
-          y2 = map(limit - end, 0, 1, y1, y2);
-        }
-        pg.line(x1,y1, x2,y2);
-        if (firstPass) {
-          scribble.add(new ScribbleLine(true, x * scale + x1, y * scale + y1));
-        }
-        scribble.add(new ScribbleLine(false, x * scale + x2, y * scale + y2));
-      }
-      j++;
-      if (j <= end) {
-        x1 = map(j, 0, len, boundaryLinePtsB[1].x, boundaryLinePtsB[0].x);
-        y1 = x1 * m0 + c2;
-        if (j == end) {
-          x1 = map(limit - end, 0, 1, x2, x1);
-          y1 = map(limit - end, 0, 1, y2, y1);
-        }
-        pg.line(x2,y2, x1,y1);
-        scribble.add(new ScribbleLine(firstPass, x * scale + x1, y * scale + y1));
-      }
-      firstPass = false;
-    }
+    m0 = (points[0].y - centre.y) / (points[0].x - centre.x);
+    m1 = (perpenPts[0].y - boundaryLinePtsA[0].y) / (perpenPts[0].x - boundaryLinePtsA[0].x);
+    c1 = boundaryLinePtsA[0].y - m1 * boundaryLinePtsA[0].x;
+    m2 = (perpenPts[1].y - boundaryLinePtsB[0].y) / (perpenPts[1].x - boundaryLinePtsB[0].x);
+    c2 = boundaryLinePtsB[0].y - m2 * boundaryLinePtsB[0].x;
+    x1 = map(j, 0, len, boundaryLinePtsB[1].x, boundaryLinePtsB[0].x);
+    y1 = x1 * m0 + c2;
+    x2 = map(j, 0, len, boundaryLinePtsA[0].x, boundaryLinePtsA[1].x);
+    y2 = x2 * m0 + c1;
   } else {
     // x = my + c;
-    float m0 = (points[0].x - centre.x) / (points[0].y - centre.y);
-    float m1 = (perpenPts[0].x - boundaryLinePtsA[0].x) / (perpenPts[0].y - boundaryLinePtsA[0].y);
-    float c1 = boundaryLinePtsA[0].x - m1 * boundaryLinePtsA[0].y;
-    float m2 = (perpenPts[1].x - boundaryLinePtsB[0].x) / (perpenPts[1].y - boundaryLinePtsB[0].y);
-    float c2 = boundaryLinePtsB[0].x - m2 * boundaryLinePtsB[0].y;
-    float y1 = boundaryLinePtsB[1].y;
-    float x1 = y1 * m0 + c2;
-    boolean firstPass = true;
-    for (int j = start; j <= end; j++) {
-      float y2 = map(j, 0, len, boundaryLinePtsA[0].y, boundaryLinePtsA[1].y);
-      float x2 = y2 * m0 + c1;
-      if (!firstPass || j == end) {
-        if (j == end) {
-          x2 = map(limit - end, 0, 1, x1, x2);
-          y2 = map(limit - end, 0, 1, y1, y2);
-        }
-        pg.line(x1,y1, x2,y2);
-        if (firstPass) {
-          scribble.add(new ScribbleLine(true, x * scale + x1, y * scale + y1));
-        }
+    m0 = (points[0].x - centre.x) / (points[0].y - centre.y);
+    m1 = (perpenPts[0].x - boundaryLinePtsA[0].x) / (perpenPts[0].y - boundaryLinePtsA[0].y);
+    c1 = boundaryLinePtsA[0].x - m1 * boundaryLinePtsA[0].y;
+    m2 = (perpenPts[1].x - boundaryLinePtsB[0].x) / (perpenPts[1].y - boundaryLinePtsB[0].y);
+    c2 = boundaryLinePtsB[0].x - m2 * boundaryLinePtsB[0].y;
+    y1 = map(j, 0, len, boundaryLinePtsB[1].y, boundaryLinePtsB[0].y);
+    x1 = y1 * m0 + c2;
+    y2 = map(j, 0, len, boundaryLinePtsA[0].y, boundaryLinePtsA[1].y);
+    x2 = y2 * m0 + c1;
+  }
+  int pass = 0;
+  for (; j <= end; j += step) {
+    pass++;
+    float old_x1 = x1;
+    float old_y1 = y1;
+    float old_x2 = x2;
+    float old_y2 = y2;
+    if (along_x_axis) {
+      x1 = map(j, 0, len, boundaryLinePtsB[1].x, boundaryLinePtsB[0].x);
+      y1 = x1 * m0 + c2;
+      x2 = map(j, 0, len, boundaryLinePtsA[0].x, boundaryLinePtsA[1].x);
+      y2 = x2 * m0 + c1;
+    } else {
+      y1 = map(j, 0, len, boundaryLinePtsB[1].y, boundaryLinePtsB[0].y);
+      x1 = y1 * m0 + c2;
+      y2 = map(j, 0, len, boundaryLinePtsA[0].y, boundaryLinePtsA[1].y);
+      x2 = y2 * m0 + c1;
+    }
+    if (pass > 1) { // along the boundary line
+      if (pass % 2 == 0) {
+        pg.line(old_x1,old_y1, x1,y1);
+        scribble.add(new ScribbleLine(false, x * scale + x1, y * scale + y1));
+      } else {
+        pg.line(old_x2,old_y2, x2,y2);
         scribble.add(new ScribbleLine(false, x * scale + x2, y * scale + y2));
       }
-      j++;
-      if (j <= end) {
-        y1 = map(j, 0, len, boundaryLinePtsB[1].y, boundaryLinePtsB[0].y);
-        x1 = y1 * m0 + c2;
-        if (j == end) {
-          x1 = map(limit - end, 0, 1, x2, x1);
-          y1 = map(limit - end, 0, 1, y2, y1);
-        }
-        pg.line(x2,y2, x1,y1);
-        scribble.add(new ScribbleLine(firstPass, x * scale + x1, y * scale + y1));
+    }
+    if (j + step > end) { // between the lines
+      if (pass % 2 == 0) {
+        x2 = map(limit - end, 0, 1, x1, x2);
+        y2 = map(limit - end, 0, 1, y1, y2);
+      } else {
+        x1 = map(limit - end, 0, 1, x2, x1);
+        y1 = map(limit - end, 0, 1, y2, y1);
       }
-      firstPass = false;
+    }
+    if (pass % 2 == 0) {
+      pg.line(x1,y1, x2,y2);
+      scribble.add(new ScribbleLine(pass == 1, x * scale + x1, y * scale + y1));
+      scribble.add(new ScribbleLine(false, x * scale + x2, y * scale + y2));
+    } else {
+      pg.line(x2,y2, x1,y1);
+      scribble.add(new ScribbleLine(pass == 1, x * scale + x2, y * scale + y2));
+      scribble.add(new ScribbleLine(false, x * scale + x1, y * scale + y1));
     }
   }
 }
