@@ -146,19 +146,24 @@ void saveScribbleDataSVG(String svgSaveFile) {
   svg.background(255);
   svg.strokeWeight(penWidth);
   for (String ink : inksList) {
-    float xB = 0;
-    float yB = 0;
     color dotColour = getRGBfromInk(ink);
     svg.stroke(dotColour);
+    boolean startedShape = false;
     for (ScribbleLine line : scribbleLines[mapInkToIndex(ink)]) {
-      float xA = line.x;
-      float yA = line.y;
-      if (!line.moveTo) {
-        svg.line(xB,yB, xA,yA);
-        numLines++;
+      if (!startedShape) {
+        svg.beginShape(); // default POLYGON => SVG path
+        numLines--;
+        startedShape = true;
+      } else if (line.moveTo) {
+        svg.endShape();
+        svg.beginShape();
+        numLines--;
       }
-      xB = xA;
-      yB = yA;
+      svg.vertex(line.x, line.y);
+      numLines++;
+    }
+    if (startedShape) {
+      svg.endShape();
     }
   }
   svg.dispose();
