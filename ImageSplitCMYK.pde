@@ -144,6 +144,7 @@ void saveScribbleDataSVG(String svgSaveFile) {
   PGraphics svg = createGraphics(outputPictureDim.w, outputPictureDim.h, SVG, svgSaveFile);
   svg.beginDraw();
   svg.background(255);
+  svg.noFill();
   svg.strokeWeight(penWidth);
   for (String ink : inksList) {
     color dotColour = getRGBfromInk(ink);
@@ -151,12 +152,12 @@ void saveScribbleDataSVG(String svgSaveFile) {
     boolean startedShape = false;
     for (ScribbleLine line : scribbleLines[mapInkToIndex(ink)]) {
       if (!startedShape) {
-        svg.beginShape(); // default POLYGON => SVG path
+        svg.beginShape(POLYGON); // default POLYGON => SVG path
         numLines--;
         startedShape = true;
       } else if (line.moveTo) {
         svg.endShape();
-        svg.beginShape();
+        svg.beginShape(POLYGON);
         numLines--;
       }
       svg.vertex(line.x, line.y);
